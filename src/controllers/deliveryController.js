@@ -39,6 +39,16 @@ function generatePin() {
   return String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
 }
 
+/**
+ * Ghana numbers get stored in whatever format an admin typed them in
+ * (0XXXXXXXXX, 233XXXXXXXXX, +233 XX XXX XXXX, ...). Compare on the last 9
+ * significant digits so a rider can log in regardless of which format was
+ * used when their account was created.
+ */
+function normalizePhone(raw) {
+  return String(raw || '').replace(/\D/g, '').slice(-9);
+}
+
 /** never expose credential hashes to the client */
 function publicRider(person) {
   const { pinHash, passwordHash, ...rest } = person.toJSON();
@@ -221,7 +231,11 @@ async function riderLogin(req, res, next) {
   try {
     const { phone, credential } = req.body;
     if (!phone || !credential) return res.status(400).json({ error: 'phone and credential are required' });
-    const rider = await DeliveryPerson.findOne({ where: { phoneNumber: phone.trim(), isActive: true } });
+    const normalizedPhone = normalizePhone(phone);
+    const activeRiders = await DeliveryPerson.findAll({ where: { isActive: true } });
+    const rider = normalizedPhone
+      ? activeRiders.find((r) => normalizePhone(r.phoneNumber) === normalizedPhone)
+      : null;
     if (!rider) return res.status(401).json({ error: 'Invalid phone number or credential' });
 
     const usingPassword = Boolean(rider.passwordHash);
