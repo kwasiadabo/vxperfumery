@@ -20,6 +20,8 @@
     "multer": "^2.2.0",
     "pdfkit": "^0.19.1",
     "sequelize": "^6.37.5",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "tedious": "^18.6.1"
   },
   "devDependencies": {

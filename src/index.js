@@ -3,8 +3,10 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const morgan = require('morgan');
+const swaggerUi = require('swagger-ui-express');
 const routes = require('./routes');
 const { sequelize } = require('./models');
+const swaggerSpec = require('./config/swagger');
 
 const app = express();
 
@@ -15,6 +17,8 @@ app.use(morgan('dev'));
 
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/api/docs.json', (_req, res) => res.json(swaggerSpec));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: 'VX Perfumery API Docs' }));
 app.use('/api', routes);
 
 app.use((err, _req, res, _next) => {
