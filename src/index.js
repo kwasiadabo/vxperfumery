@@ -10,7 +10,18 @@ const swaggerSpec = require('./config/swagger');
 
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
+// CLIENT_URL may be a single origin or a comma-separated list (local dev + deployed frontend)
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim());
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  },
+  credentials: true,
+}));
 // Keep the raw body around — Paystack webhook signatures are computed over the raw payload
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(morgan('dev'));
