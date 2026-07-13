@@ -149,7 +149,11 @@ async function updateOrderStatus(req, res, next) {
     if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
 
     const order = await Order.findByPk(req.params.id, {
-      include: [User, DeliveryPerson, { model: OrderItem, include: [Product] }],
+      include: [
+        { model: User, attributes: ['firstName', 'lastName', 'email', 'phoneNumber'] },
+        { model: DeliveryPerson, attributes: ['id', 'name', 'phoneNumber'] },
+        { model: OrderItem, include: [Product] },
+      ],
     });
     if (!order) return res.status(404).json({ error: 'Order not found' });
     if (status === 'dispatched' && !order.DeliveryPersonId) {

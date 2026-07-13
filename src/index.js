@@ -2,13 +2,19 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const helmet = require('helmet');
 const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
 const routes = require('./routes');
 const { sequelize } = require('./models');
 const swaggerSpec = require('./config/swagger');
+const { apiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
+
+// crossOriginResourcePolicy relaxed for /uploads — product images are meant
+// to be embeddable cross-origin by the storefront frontend.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // Render sits behind a reverse proxy — without this, req.protocol always
 // reports 'http' even on an HTTPS request, breaking the self-origin check below.
@@ -48,7 +54,7 @@ app.use(
 	swaggerUi.serve,
 	swaggerUi.setup(swaggerSpec, { customSiteTitle: 'VX Perfumery API Docs' }),
 );
-app.use('/api', routes);
+app.use('/api', apiLimiter, routes);
 
 app.use((err, _req, res, _next) => {
 	console.error(err);

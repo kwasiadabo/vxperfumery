@@ -1,49 +1,64 @@
 const jwt = require('jsonwebtoken');
+const { User, DeliveryPerson } = require('../models');
 
-function requireAuth(req, res, next) {
+function verifyBearer(req) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  if (!token) return null;
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
+    return jwt.verify(token, process.env.JWT_SECRET);
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    return null;
   }
+}
+
+function requireAuth(req, res, next) {
+  const payload = verifyBearer(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+  req.user = payload;
+  next();
 }
 
 /** Decodes a bearer token into req.user if present, but never rejects — for routes usable by both signed-in and guest requests. */
 function optionalAuth(req, _res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (token) {
-    try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET);
-    } catch {
-      // invalid/expired token on an optional-auth route — proceed as a guest rather than rejecting
-    }
-  }
+  const payload = verifyBearer(req);
+  if (payload) req.user = payload;
   next();
 }
 
-function requireAdmin(req, res, next) {
-  requireAuth(req, res, () => {
-    if (!req.user.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+/**
+ * Re-checks admin status against the DB on every request instead of trusting
+ * the JWT payload alone — tokens live for 7 days, so without this, revoking
+ * someone's admin access (or suspending their account) wouldn't take effect
+ * until their token naturally expires.
+ */
+async function requireAdmin(req, res, next) {
+  const payload = verifyBearer(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const user = await User.findByPk(payload.id, { attributes: ['isAdmin', 'accountStatus'] });
+    if (!user || !user.isAdmin || user.accountStatus !== 'active') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    req.user = payload;
     next();
-  });
+  } catch (err) {
+    next(err);
+  }
 }
 
-function requireRider(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Rider authentication required' });
+/** Same freshness concern as requireAdmin — a deactivated rider's existing token shouldn't keep working. */
+async function requireRider(req, res, next) {
+  const payload = verifyBearer(req);
+  if (!payload) return res.status(401).json({ error: 'Rider authentication required' });
+  if (payload.role !== 'rider') return res.status(403).json({ error: 'Rider access required' });
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    if (payload.role !== 'rider') return res.status(403).json({ error: 'Rider access required' });
+    const rider = await DeliveryPerson.findByPk(payload.id, { attributes: ['isActive'] });
+    if (!rider || !rider.isActive) return res.status(403).json({ error: 'Rider account deactivated' });
     req.rider = payload;
     next();
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  } catch (err) {
+    next(err);
   }
 }
 

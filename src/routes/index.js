@@ -2,6 +2,7 @@ const router = require('express').Router();
 const path = require('path');
 const multer = require('multer');
 const { requireAuth, optionalAuth, requireAdmin, requireRider, requireRiderPasswordSet } = require('../middleware/auth');
+const { authLimiter, lookupLimiter } = require('../middleware/rateLimit');
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -55,7 +56,7 @@ const reports = require('../controllers/reportController');
  *         description: Email already registered
  *         content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
  */
-router.post('/auth/register', auth.register);
+router.post('/auth/register', authLimiter, auth.register);
 
 /**
  * @openapi
@@ -84,7 +85,7 @@ router.post('/auth/register', auth.register);
  *         description: Account suspended
  *         content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
  */
-router.post('/auth/login', auth.login);
+router.post('/auth/login', authLimiter, auth.login);
 
 /**
  * @openapi
@@ -498,7 +499,7 @@ router.get('/orders', requireAuth, orders.listMyOrders);
  *       400: { $ref: '#/components/responses/BadRequest' }
  *       404: { $ref: '#/components/responses/NotFound' }
  */
-router.get('/orders/lookup', orders.lookupOrder);
+router.get('/orders/lookup', lookupLimiter, orders.lookupOrder);
 
 /**
  * @openapi
@@ -700,7 +701,7 @@ router.get('/delivery-fees', delivery.listFees);
  *       400: { $ref: '#/components/responses/BadRequest' }
  *       401: { $ref: '#/components/responses/Unauthorized' }
  */
-router.post('/rider/login', delivery.riderLogin);
+router.post('/rider/login', authLimiter, delivery.riderLogin);
 
 /**
  * @openapi
