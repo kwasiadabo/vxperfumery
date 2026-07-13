@@ -148,6 +148,41 @@ async function createOrder(req, res, next) {
 }
 
 /**
+ * Marks an order paid, records the Payment, and sends the order-confirmed SMS.
+ * Shared by the webhook and the client-triggered verify path below — whichever
+ * of the two reaches a given order first (the webhook can lag the browser's
+ * own redirect-triggered verify by several seconds) is the one that fires this,
+ * so the confirmation always goes out exactly once instead of only when the
+ * webhook happens to win the race.
+ */
+async function markOrderPaidAndNotify(order, verified) {
+  order.status = 'pending_delivery';
+  order.paymentStatus = 'completed';
+  await order.save();
+  await Payment.findOrCreate({
+    where: { paystackReference: order.paystackReference, status: 'success' },
+    defaults: {
+      OrderId: order.id,
+      amount: verified.amount / 100,
+      currency: verified.currency,
+      method: verified.channel,
+    },
+  });
+  const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
+  const phone = order.User?.phoneNumber || order.guestPhone;
+  const name = order.User?.firstName || order.guestName;
+  const smsResult = phone && await sendSms(phone, 'order_confirmed', {
+    name,
+    orderNumber: order.orderNumber,
+    amount: Number(order.totalAmount).toFixed(2),
+  });
+  if (smsResult) {
+    history.smsSentAt = new Date();
+    await history.save();
+  }
+}
+
+/**
  * POST /paystack/webhook — Paystack calls this on payment events.
  * Signature is verified against the raw request body.
  */
@@ -169,30 +204,7 @@ async function paystackWebhook(req, res) {
       const verified = await paystack.verifyTransaction(reference);
       if (verified.status !== 'success') return;
 
-      order.status = 'pending_delivery';
-      order.paymentStatus = 'completed';
-      await order.save();
-      await Payment.create({
-        OrderId: order.id,
-        amount: verified.amount / 100,
-        currency: verified.currency,
-        method: verified.channel,
-        paystackReference: reference,
-        status: 'success',
-      });
-
-      const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
-      const phone = order.User?.phoneNumber || order.guestPhone;
-      const name = order.User?.firstName || order.guestName;
-      const smsResult = phone && await sendSms(phone, 'order_confirmed', {
-        name,
-        orderNumber: order.orderNumber,
-        amount: Number(order.totalAmount).toFixed(2),
-      });
-      if (smsResult) {
-        history.smsSentAt = new Date();
-        await history.save();
-      }
+      await markOrderPaidAndNotify(order, verified);
     }
   } catch (err) {
     console.error('Webhook processing error:', err);
@@ -220,19 +232,7 @@ async function verifyByReference(req, res, next) {
       try {
         const verified = await paystack.verifyTransaction(reference);
         if (verified.status === 'success') {
-          order.status = 'pending_delivery';
-          order.paymentStatus = 'completed';
-          await order.save();
-          await Payment.findOrCreate({
-            where: { paystackReference: reference, status: 'success' },
-            defaults: {
-              OrderId: order.id,
-              amount: verified.amount / 100,
-              currency: verified.currency,
-              method: verified.channel,
-            },
-          });
-          await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
+          await markOrderPaidAndNotify(order, verified);
         }
       } catch {
         // verification unavailable — report current stored status
