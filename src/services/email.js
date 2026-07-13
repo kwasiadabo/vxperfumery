@@ -22,6 +22,10 @@ function getTransporter() {
   transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_APP_PASSWORD },
+    // Gmail's SMTP host resolves to both IPv4 and IPv6; on networks with broken/
+    // partial IPv6 routing that intermittently produces ENETUNREACH. Force IPv4
+    // so delivery doesn't depend on the host's IPv6 route being up.
+    family: 4,
   });
   return transporter;
 }

@@ -50,8 +50,11 @@ async function sendSms(phoneNumber, messageType, params = {}) {
     await NotificationLog.create({ ...log, status: 'sent', externalReferenceId: String(data?.job_id || data?.msg_id || '') });
     return data;
   } catch (err) {
-    console.error(`Nalo SMS failed (${messageType} → ${phoneNumber}):`, err.message);
-    await NotificationLog.create({ ...log, status: 'failed', errorMessage: err.message }).catch(() => {});
+    // Nalo's actual reason (e.g. "IP is not whitelisted") is in the response
+    // body, not err.message — axios only gives the generic HTTP status there.
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`Nalo SMS failed (${messageType} → ${phoneNumber}):`, detail);
+    await NotificationLog.create({ ...log, status: 'failed', errorMessage: detail }).catch(() => {});
     return null;
   }
 }
