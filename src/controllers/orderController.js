@@ -180,6 +180,8 @@ async function markOrderPaidAndNotify(order, verified) {
   const emailResult = email && await sendEmail(email, 'order_confirmed', {
     name,
     orderNumber: order.orderNumber,
+    orderDate: order.createdAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+    paymentMethod: verified.channel ? verified.channel.replace(/_/g, ' ') : undefined,
     amount: Number(order.totalAmount).toFixed(2),
     subtotal: Number(order.subtotal).toFixed(2),
     shippingCost: Number(order.shippingCost).toFixed(2),

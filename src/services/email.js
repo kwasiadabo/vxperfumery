@@ -100,20 +100,59 @@ const templates = {
     subject: `Order Confirmed — ${p.orderNumber}`,
     html: layout({
       title: 'Order Confirmed',
-      preheader: `Your order ${p.orderNumber} is confirmed`,
+      preheader: `Payment received for order ${p.orderNumber} — here's what happens next`,
       bodyHtml: `
+        <table role="presentation" width="100%" style="background:#f0f7f0;border-radius:6px;margin-bottom:20px;">
+          <tr>
+            <td style="padding:14px 16px;">
+              <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#2e7d32;color:#fff;font-size:12px;line-height:18px;text-align:center;margin-right:8px;">&#10003;</span>
+              <span style="font-size:14px;color:#2e7d32;font-weight:bold;">Payment received</span>
+            </td>
+          </tr>
+        </table>
         <h1 style="font-size:20px;color:${BRAND.dark};margin:0 0 12px;">Thank you, ${p.name}!</h1>
         <p style="font-size:14px;color:${BRAND.muted};line-height:1.6;margin:0 0 8px;">
-          Your order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong> has been confirmed and is being prepared.
-          We'll notify you as soon as it's on its way.
+          Your order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong>${p.orderDate ? ` placed on ${p.orderDate}` : ''} is confirmed and being prepared.
         </p>
         ${itemsTable(p.items)}
         <table role="presentation" width="100%" style="margin-top:4px;">
           <tr><td style="font-size:14px;color:${BRAND.muted};padding:4px 0;">Subtotal</td><td align="right" style="font-size:14px;color:${BRAND.dark};">${currency(p.subtotal)}</td></tr>
           <tr><td style="font-size:14px;color:${BRAND.muted};padding:4px 0;">Delivery</td><td align="right" style="font-size:14px;color:${BRAND.dark};">${currency(p.shippingCost)}</td></tr>
           <tr><td style="font-size:15px;font-weight:bold;color:${BRAND.dark};padding:10px 0 0;border-top:2px solid ${BRAND.dark};">Total</td><td align="right" style="font-size:15px;font-weight:bold;color:${BRAND.dark};padding:10px 0 0;border-top:2px solid ${BRAND.dark};">${currency(p.amount)}</td></tr>
+          ${p.paymentMethod ? `<tr><td style="font-size:12px;color:${BRAND.muted};padding-top:6px;">Paid via ${p.paymentMethod}</td><td></td></tr>` : ''}
         </table>
-        <p style="font-size:13px;color:${BRAND.muted};margin-top:24px;">Delivering to: ${p.address}</p>
+        <p style="font-size:13px;color:${BRAND.muted};margin-top:16px;">Delivering to: ${p.address}</p>
+
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};margin:28px 0 14px;padding-top:20px;border-top:1px solid #eee;">What happens next</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="width:26px;vertical-align:top;padding-bottom:16px;">
+              <div style="width:20px;height:20px;border-radius:50%;background:${BRAND.gold};color:#fff;font-size:12px;font-weight:bold;text-align:center;line-height:20px;">1</div>
+            </td>
+            <td style="vertical-align:top;padding-bottom:16px;">
+              <div style="font-size:13px;color:${BRAND.dark};font-weight:bold;">Preparing your order</div>
+              <div style="font-size:12px;color:${BRAND.muted};margin-top:2px;">We're packing your fragrance(s) now.</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="width:26px;vertical-align:top;padding-bottom:16px;">
+              <div style="width:20px;height:20px;border-radius:50%;border:1.5px solid #ccc;color:${BRAND.muted};font-size:12px;text-align:center;line-height:17px;">2</div>
+            </td>
+            <td style="vertical-align:top;padding-bottom:16px;">
+              <div style="font-size:13px;color:${BRAND.dark};font-weight:bold;">Dispatched</div>
+              <div style="font-size:12px;color:${BRAND.muted};margin-top:2px;">You'll get an SMS and email with your rider's name, phone number, and estimated delivery time.</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="width:26px;vertical-align:top;">
+              <div style="width:20px;height:20px;border-radius:50%;border:1.5px solid #ccc;color:${BRAND.muted};font-size:12px;text-align:center;line-height:17px;">3</div>
+            </td>
+            <td style="vertical-align:top;">
+              <div style="font-size:13px;color:${BRAND.dark};font-weight:bold;">Delivered</div>
+              <div style="font-size:12px;color:${BRAND.muted};margin-top:2px;">Your rider hands it over — enjoy your fragrance!</div>
+            </td>
+          </tr>
+        </table>
       `,
     }),
   }),
