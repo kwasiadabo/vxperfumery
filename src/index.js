@@ -10,17 +10,22 @@ const swaggerSpec = require('./config/swagger');
 
 const app = express();
 
+// Render sits behind a reverse proxy — without this, req.protocol always
+// reports 'http' even on an HTTPS request, breaking the self-origin check below.
+app.set('trust proxy', 1);
+
 // CLIENT_URL may be a single origin or a comma-separated list (local dev + deployed frontend)
 const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim());
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error(`Origin ${origin} is not allowed by CORS`));
-  },
-  credentials: true,
+app.use(cors((req, callback) => {
+  const origin = req.header('Origin');
+  const selfOrigin = `${req.protocol}://${req.get('host')}`;
+  // Always allow the API's own origin — needed for the Swagger "Try it out" UI at /api/docs
+  const isAllowed = !origin || origin === selfOrigin || allowedOrigins.includes(origin);
+  if (isAllowed) return callback(null, { origin: true, credentials: true });
+  callback(new Error(`Origin ${origin} is not allowed by CORS`));
 }));
 // Keep the raw body around — Paystack webhook signatures are computed over the raw payload
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
