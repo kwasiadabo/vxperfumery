@@ -1,5 +1,36 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns').promises;
 const { NotificationLog } = require('../models');
+
+const GMAIL_HOST = 'smtp.gmail.com';
+const GMAIL_PORT = 465;
+const IP_CACHE_MS = 5 * 60 * 1000;
+
+// nodemailer resolves both A and AAAA records for the SMTP host and then picks
+// one at RANDOM to connect to (see nodemailer/lib/shared/index.js formatDNSValue)
+// instead of preferring IPv4 — so on networks with broken/partial IPv6 routing
+// this intermittently connects over IPv6 and fails with ENETUNREACH, or hangs
+// until connectionTimeout. Passing a `family` option does nothing (it isn't
+// read anywhere in that resolution path). The only reliable fix is to resolve
+// an IPv4 address ourselves and hand nodemailer a literal IP as `host` — a
+// literal IP short-circuits its own DNS resolution entirely. `servername` is
+// set explicitly so TLS SNI/cert validation still checks against the real
+// hostname instead of the IP.
+let cachedIPv4 = null;
+let cachedIPv4At = 0;
+async function resolveGmailIPv4() {
+  if (cachedIPv4 && Date.now() - cachedIPv4At < IP_CACHE_MS) return cachedIPv4;
+  try {
+    const addresses = await dns.resolve4(GMAIL_HOST);
+    if (addresses.length) {
+      cachedIPv4 = addresses[Math.floor(Math.random() * addresses.length)];
+      cachedIPv4At = Date.now();
+    }
+  } catch (err) {
+    console.error('Failed to resolve smtp.gmail.com over IPv4, falling back to hostname:', err.message);
+  }
+  return cachedIPv4;
+}
 
 const BRAND = {
   name: 'VX Perfumery',
@@ -11,23 +42,24 @@ const BRAND = {
 };
 
 // Lazily created so a missing EMAIL_USER/EMAIL_APP_PASSWORD doesn't crash the
-// server at boot — it just disables email sending until configured.
-let transporter;
-function getTransporter() {
-  if (transporter !== undefined) return transporter;
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) {
-    transporter = null;
-    return transporter;
-  }
-  transporter = nodemailer.createTransport({
-    service: 'gmail',
+// server at boot — it just disables email sending until configured. Rebuilt
+// per send (cheap — createTransport does no I/O) so the resolved IP can be
+// refreshed as resolveGmailIPv4()'s cache expires.
+async function getTransporter() {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) return null;
+  const ip = await resolveGmailIPv4();
+  return nodemailer.createTransport({
+    host: ip || GMAIL_HOST,
+    port: GMAIL_PORT,
+    secure: true,
+    servername: GMAIL_HOST,
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_APP_PASSWORD },
-    // Gmail's SMTP host resolves to both IPv4 and IPv6; on networks with broken/
-    // partial IPv6 routing that intermittently produces ENETUNREACH. Force IPv4
-    // so delivery doesn't depend on the host's IPv6 route being up.
-    family: 4,
+    // Fail fast instead of hanging up to nodemailer's ~2min default — order
+    // processing awaits this and a stuck connection shouldn't stall it.
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
-  return transporter;
 }
 
 function currency(n) {
@@ -227,7 +259,7 @@ async function sendEmail(to, messageType, params = {}) {
   const { subject, html } = build(params);
   const log = { recipient: to, messageType, provider: 'gmail_smtp' };
 
-  const t = getTransporter();
+  const t = await getTransporter();
   if (!t) {
     console.error(`Email not sent (${messageType} → ${to}): set EMAIL_USER and EMAIL_APP_PASSWORD in .env`);
     await NotificationLog.create({ ...log, status: 'failed', errorMessage: 'Email not configured' }).catch(() => {});

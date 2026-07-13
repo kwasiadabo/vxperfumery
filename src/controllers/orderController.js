@@ -172,26 +172,34 @@ async function markOrderPaidAndNotify(order, verified) {
   });
   const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
   const { phone, name, email } = orderRecipient(order);
-  const smsResult = phone && await sendSms(phone, 'order_confirmed', {
-    name,
-    orderNumber: order.orderNumber,
-    amount: Number(order.totalAmount).toFixed(2),
-  });
-  const emailResult = email && await sendEmail(email, 'order_confirmed', {
-    name,
-    orderNumber: order.orderNumber,
-    orderDate: order.createdAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-    paymentMethod: verified.channel ? verified.channel.replace(/_/g, ' ') : undefined,
-    amount: Number(order.totalAmount).toFixed(2),
-    subtotal: Number(order.subtotal).toFixed(2),
-    shippingCost: Number(order.shippingCost).toFixed(2),
-    address: order.shippingAddress,
-    items: getOrderItems(order),
-  });
-  if (smsResult || emailResult) {
-    history.smsSentAt = new Date();
-    await history.save();
-  }
+
+  // Fire notifications in the background — SMS/email providers can take
+  // seconds (or, on a bad connection, their full timeout) to respond, and
+  // this function is awaited directly from the client-facing verify endpoint,
+  // so blocking on them here was what made payment confirmation feel slow.
+  Promise.all([
+    phone && sendSms(phone, 'order_confirmed', {
+      name,
+      orderNumber: order.orderNumber,
+      amount: Number(order.totalAmount).toFixed(2),
+    }),
+    email && sendEmail(email, 'order_confirmed', {
+      name,
+      orderNumber: order.orderNumber,
+      orderDate: order.createdAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      paymentMethod: verified.channel ? verified.channel.replace(/_/g, ' ') : undefined,
+      amount: Number(order.totalAmount).toFixed(2),
+      subtotal: Number(order.subtotal).toFixed(2),
+      shippingCost: Number(order.shippingCost).toFixed(2),
+      address: order.shippingAddress,
+      items: getOrderItems(order),
+    }),
+  ]).then(([smsResult, emailResult]) => {
+    if (smsResult || emailResult) {
+      history.smsSentAt = new Date();
+      return history.save();
+    }
+  }).catch((err) => console.error('order_confirmed notification error:', err.message));
 }
 
 /**

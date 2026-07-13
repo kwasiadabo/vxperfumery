@@ -191,43 +191,50 @@ async function dispatchRider(req, res, next) {
       const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'dispatched' });
       const { phone, name, email } = orderRecipient(order);
       const d = dispatchDetails(order, person);
-      const smsResult = phone && await sendSms(phone, 'order_shipped', {
-        name,
-        orderNumber: order.orderNumber,
-        items: d.itemsText,
-        riderName: d.riderName,
-        riderPhone: d.riderPhone,
-        eta: d.eta,
-      });
-      const emailResult = email && await sendEmail(email, 'order_shipped', {
-        name,
-        orderNumber: order.orderNumber,
-        items: d.items,
-        riderName: d.riderName,
-        riderPhone: d.riderPhone,
-        eta: d.eta,
-        address: order.shippingAddress,
-      });
-      if (smsResult || emailResult) {
-        history.smsSentAt = new Date();
-        await history.save();
-      }
+
+      // Fire notifications in the background — awaiting SMS + email per order
+      // here made dispatching a multi-order run take as long as every provider
+      // round-trip added together, blocking the admin's response.
+      Promise.all([
+        phone && sendSms(phone, 'order_shipped', {
+          name,
+          orderNumber: order.orderNumber,
+          items: d.itemsText,
+          riderName: d.riderName,
+          riderPhone: d.riderPhone,
+          eta: d.eta,
+        }),
+        email && sendEmail(email, 'order_shipped', {
+          name,
+          orderNumber: order.orderNumber,
+          items: d.items,
+          riderName: d.riderName,
+          riderPhone: d.riderPhone,
+          eta: d.eta,
+          address: order.shippingAddress,
+        }),
+      ]).then(([smsResult, emailResult]) => {
+        if (smsResult || emailResult) {
+          history.smsSentAt = new Date();
+          return history.save();
+        }
+      }).catch((err) => console.error('order_shipped notification error:', err.message));
     }
 
-    // one SMS covering the whole run
+    // one SMS covering the whole run — also backgrounded so it doesn't add to
+    // the response time on top of the per-order notifications above.
     const stops = orders
       .map((o, i) => `${i + 1}) ${o.orderNumber} - ${o.shippingAddress}`)
       .join('; ');
-    const smsSent = Boolean(await sendSms(person.phoneNumber, 'rider_dispatch', {
+    sendSms(person.phoneNumber, 'rider_dispatch', {
       name: person.name,
       count: orders.length,
       stops,
-    }));
+    }).catch((err) => console.error('rider_dispatch notification error:', err.message));
 
     res.json({
       deliveryPersonId: person.id,
       dispatched: orders.map((o) => ({ id: o.id, orderNumber: o.orderNumber })),
-      smsSent,
     });
   } catch (err) {
     next(err);
@@ -340,12 +347,15 @@ async function riderConfirmDelivery(req, res, next) {
 
     const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'delivered' });
     const { phone, name, email } = orderRecipient(order);
-    const smsResult = phone && await sendSms(phone, 'order_delivered', { name, orderNumber: order.orderNumber });
-    const emailResult = email && await sendEmail(email, 'order_delivered', { name, orderNumber: order.orderNumber });
-    if (smsResult || emailResult) {
-      history.smsSentAt = new Date();
-      await history.save();
-    }
+    Promise.all([
+      phone && sendSms(phone, 'order_delivered', { name, orderNumber: order.orderNumber }),
+      email && sendEmail(email, 'order_delivered', { name, orderNumber: order.orderNumber }),
+    ]).then(([smsResult, emailResult]) => {
+      if (smsResult || emailResult) {
+        history.smsSentAt = new Date();
+        return history.save();
+      }
+    }).catch((err) => console.error('order_delivered notification error:', err.message));
     res.json({ orderId: order.id, orderNumber: order.orderNumber, status: order.status });
   } catch (err) {
     next(err);
