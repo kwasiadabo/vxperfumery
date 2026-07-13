@@ -44,6 +44,16 @@ async function listMine(req, res, next) {
   }
 }
 
+/** GET /admin/issues/open-count — cheap poll target for the admin sidebar badge/alert. */
+async function openCount(_req, res, next) {
+  try {
+    const count = await Issue.count({ where: { status: 'open' } });
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function listAll(req, res, next) {
   try {
     const where = {};
@@ -83,4 +93,4 @@ async function respond(req, res, next) {
   }
 }
 
-module.exports = { create, listMine, listAll, respond, CATEGORIES, STATUSES };
+module.exports = { create, listMine, listAll, respond, openCount, CATEGORIES, STATUSES };

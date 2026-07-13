@@ -264,9 +264,10 @@ function buildSalesReport({ from, to, daily, totals }) {
     { label: 'Orders', width: 90, align: 'right' },
     { label: 'Revenue (GHS)', width: 110, align: 'right' },
   ];
+  const activeDays = daily.filter((d) => d.orders > 0);
   table(doc, {
     columns,
-    rows: daily.map((d, i) => [i + 1, dateLabel(d.day), String(d.orders), money(d.revenue)]),
+    rows: activeDays.map((d, i) => [i + 1, dateLabel(d.day), String(d.orders), money(d.revenue)]),
   });
 
   summaryBox(doc, [

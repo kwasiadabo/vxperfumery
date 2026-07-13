@@ -1310,6 +1310,22 @@ router.get('/admin/orders', requireAdmin, admin.listOrders);
 
 /**
  * @openapi
+ * /admin/orders/pending-count:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Count of orders awaiting dispatch (paid, not yet assigned/delivered) — cheap poll target for the sidebar badge
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Count
+ *         content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } }
+ *       401: { $ref: '#/components/responses/Unauthorized' }
+ *       403: { $ref: '#/components/responses/Forbidden' }
+ */
+router.get('/admin/orders/pending-count', requireAdmin, admin.pendingOrdersCount);
+
+/**
+ * @openapi
  * /admin/orders/{id}/status:
  *   patch:
  *     tags: [Admin]
@@ -1566,6 +1582,22 @@ router.get('/admin/reports/rider-deliveries.pdf', requireAdmin, reports.riderDel
  *       403: { $ref: '#/components/responses/Forbidden' }
  */
 router.get('/admin/issues', requireAdmin, issues.listAll);
+
+/**
+ * @openapi
+ * /admin/issues/open-count:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Count of open (unresolved) support issues — cheap poll target for the sidebar badge
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Count
+ *         content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } }
+ *       401: { $ref: '#/components/responses/Unauthorized' }
+ *       403: { $ref: '#/components/responses/Forbidden' }
+ */
+router.get('/admin/issues/open-count', requireAdmin, issues.openCount);
 
 /**
  * @openapi

@@ -128,6 +128,16 @@ async function listOrders(req, res, next) {
   }
 }
 
+/** GET /admin/orders/pending-count — cheap poll target for the admin sidebar badge/alert. */
+async function pendingOrdersCount(_req, res, next) {
+  try {
+    const count = await Order.count({ where: { status: 'pending_delivery' } });
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+}
+
 const SMS_BY_STATUS = { dispatched: 'order_shipped', delivered: 'order_delivered' };
 
 async function updateOrderStatus(req, res, next) {
@@ -470,6 +480,6 @@ async function inventoryReport(_req, res, next) {
 module.exports = {
   createProduct, updateProduct, deleteProduct, restockProduct,
   createBrand, createCategory,
-  listOrders, updateOrderStatus,
+  listOrders, updateOrderStatus, pendingOrdersCount,
   dashboard, salesReport, salesReportPdf, productSalesTrend, inventoryReport,
 };
