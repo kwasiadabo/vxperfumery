@@ -21,15 +21,64 @@ async function createOrder(req, res, next) {
       return res.status(400).json({ error: 'address, city and region are required' });
     }
     const shippingAddress = [address, street, area, city, region].filter(Boolean).join(', ');
-    const user = await User.findByPk(req.user.id);
-    const cartItems = await CartItem.findAll({
-      where: { UserId: user.id },
-      include: [{ model: Product, include: [Inventory] }],
-      transaction: t,
-    });
-    if (!cartItems.length) {
-      await t.rollback();
-      return res.status(400).json({ error: 'Cart is empty' });
+
+    let user = null;
+    let guestFields = {};
+    let cartItems;
+
+    if (req.user) {
+      user = await User.findByPk(req.user.id);
+      cartItems = await CartItem.findAll({
+        where: { UserId: user.id },
+        include: [{ model: Product, include: [Inventory] }],
+        transaction: t,
+      });
+      if (!cartItems.length) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Cart is empty' });
+      }
+    } else {
+      // Guest checkout — no server-side cart to build from; the client sends its
+      // local cart items directly, plus contact info in place of an account.
+      const { guestName, guestEmail, guestPhone, items } = req.body;
+      if (!guestName || !guestEmail || !guestPhone) {
+        await t.rollback();
+        return res.status(400).json({ error: 'guestName, guestEmail and guestPhone are required to check out as a guest' });
+      }
+      guestFields = { guestName, guestEmail, guestPhone };
+
+      // Consolidate by product first — a client could (accidentally or not) send
+      // the same product as separate line items, which would otherwise let each
+      // one pass the per-item stock check below even though the combined
+      // quantity exceeds what's in stock.
+      const quantityByProduct = new Map();
+      for (const item of Array.isArray(items) ? items : []) {
+        const quantity = Number(item?.quantity) || 0;
+        if (!item?.productId || quantity < 1) continue;
+        quantityByProduct.set(item.productId, (quantityByProduct.get(item.productId) || 0) + quantity);
+      }
+      if (!quantityByProduct.size) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Cart is empty' });
+      }
+
+      const products = await Product.findAll({
+        where: { id: [...quantityByProduct.keys()], isActive: true },
+        include: [Inventory],
+        transaction: t,
+      });
+      const productById = new Map(products.map((p) => [p.id, p]));
+
+      cartItems = [...quantityByProduct.entries()].map(([productId, quantity]) => ({
+        ProductId: productId,
+        quantity,
+        Product: productById.get(productId),
+      }));
+      const unavailable = cartItems.find((item) => !item.Product);
+      if (unavailable) {
+        await t.rollback();
+        return res.status(409).json({ error: 'One or more items in your cart are no longer available' });
+      }
     }
 
     // Check + reserve stock inside the transaction to prevent overselling
@@ -47,7 +96,8 @@ async function createOrder(req, res, next) {
 
     const order = await Order.create({
       orderNumber,
-      UserId: user.id,
+      UserId: user?.id ?? null,
+      ...guestFields,
       subtotal,
       shippingCost,
       totalAmount,
@@ -80,11 +130,11 @@ async function createOrder(req, res, next) {
     }
 
     await OrderStatusHistory.create({ OrderId: order.id, status: 'pending' }, { transaction: t });
-    await CartItem.destroy({ where: { UserId: user.id }, transaction: t });
+    if (user) await CartItem.destroy({ where: { UserId: user.id }, transaction: t });
     await t.commit();
 
     const payment = await paystack.initializeTransaction({
-      email: user.email,
+      email: user ? user.email : guestFields.guestEmail,
       amount: totalAmount,
       reference: orderNumber,
       metadata: { orderId: order.id, orderNumber },
@@ -132,8 +182,10 @@ async function paystackWebhook(req, res) {
       });
 
       const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
-      const smsResult = await sendSms(order.User.phoneNumber, 'order_confirmed', {
-        name: order.User.firstName,
+      const phone = order.User?.phoneNumber || order.guestPhone;
+      const name = order.User?.firstName || order.guestName;
+      const smsResult = phone && await sendSms(phone, 'order_confirmed', {
+        name,
         orderNumber: order.orderNumber,
         amount: Number(order.totalAmount).toFixed(2),
       });
@@ -149,14 +201,17 @@ async function paystackWebhook(req, res) {
 
 /**
  * GET /payments/verify?reference=... — called by the payment-complete page
- * after Paystack redirects back. Verifies with Paystack and updates the order.
+ * after Paystack redirects back. Public: the Paystack reference itself (an
+ * unguessable, single-use value only known to the browser that just paid,
+ * plus Paystack/admin) is the credential here, since a guest checkout has no
+ * account to authenticate against. Verifies with Paystack and updates the order.
  */
 async function verifyByReference(req, res, next) {
   try {
     const { reference } = req.query;
     if (!reference) return res.status(400).json({ error: 'reference is required' });
     const order = await Order.findOne({
-      where: { paystackReference: reference, UserId: req.user.id },
+      where: { paystackReference: reference },
       include: [User],
     });
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -241,4 +296,41 @@ async function getOrder(req, res, next) {
   }
 }
 
-module.exports = { createOrder, paystackWebhook, verifyPayment, verifyByReference, listMyOrders, getOrder };
+/**
+ * GET /orders/lookup?orderNumber=&contact=  — public self-serve tracking, for
+ * guests (no account to sign into) and signed-in customers alike. The order
+ * number plus a matching phone/email acts as the two-factor "credential"
+ * since there's no auth on this route.
+ */
+async function lookupOrder(req, res, next) {
+  try {
+    const orderNumber = req.query.orderNumber?.trim();
+    const contact = req.query.contact?.trim();
+    if (!orderNumber || !contact) {
+      return res.status(400).json({ error: 'orderNumber and contact are required' });
+    }
+
+    const order = await Order.findOne({
+      where: { orderNumber },
+      include: [{ model: User, attributes: ['firstName', 'lastName', 'email', 'phoneNumber'] }, ...orderInclude],
+    });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const candidates = [order.User?.email, order.User?.phoneNumber, order.guestEmail, order.guestPhone]
+      .filter(Boolean);
+    const contactLower = contact.toLowerCase();
+    const contactDigits = contact.replace(/\D/g, '').slice(-9);
+    const matches = candidates.some((c) => {
+      if (c.toLowerCase() === contactLower) return true;
+      const digits = c.replace(/\D/g, '').slice(-9);
+      return contactDigits.length >= 7 && digits === contactDigits;
+    });
+    if (!matches) return res.status(404).json({ error: 'Order not found' });
+
+    res.json(order);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { createOrder, paystackWebhook, verifyPayment, verifyByReference, listMyOrders, getOrder, lookupOrder };

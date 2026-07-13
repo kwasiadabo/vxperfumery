@@ -99,6 +99,11 @@ const Order = sequelize.define('Order', {
   shippingCity: { type: DataTypes.STRING },
   shippingRegion: { type: DataTypes.STRING },
   deliveredAt: { type: DataTypes.DATE },
+  // Set only for guest checkouts (UserId is null); a signed-in order's contact
+  // info lives on the linked User instead.
+  guestName: { type: DataTypes.STRING },
+  guestEmail: { type: DataTypes.STRING },
+  guestPhone: { type: DataTypes.STRING },
 });
 
 const OrderItem = sequelize.define('OrderItem', {
@@ -199,7 +204,7 @@ User.hasMany(Address);
 Address.belongsTo(User);
 
 User.hasMany(Order);
-Order.belongsTo(User);
+Order.belongsTo(User, { foreignKey: { allowNull: true } }); // null UserId = guest checkout
 Order.hasMany(OrderItem);
 OrderItem.belongsTo(Order);
 Product.hasMany(OrderItem);

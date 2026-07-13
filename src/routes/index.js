@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const path = require('path');
 const multer = require('multer');
-const { requireAuth, requireAdmin, requireRider, requireRiderPasswordSet } = require('../middleware/auth');
+const { requireAuth, optionalAuth, requireAdmin, requireRider, requireRiderPasswordSet } = require('../middleware/auth');
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -415,8 +415,11 @@ router.delete('/favorites/:productId', requireAuth, favorites.remove);
  * /orders:
  *   post:
  *     tags: [Orders]
- *     summary: Check out — build an order from the cart, reserve stock, and start a Paystack payment
- *     security: [{ bearerAuth: [] }]
+ *     summary: Check out — build an order from the cart (or, for guests, from submitted items), reserve stock, and start a Paystack payment
+ *     description: >
+ *       Works both signed-in (builds the order from the server-side cart) and
+ *       as a guest (no auth header — pass guestName/guestEmail/guestPhone and
+ *       an items array directly, since there's no account-linked cart).
  *     requestBody:
  *       required: true
  *       content:
@@ -431,6 +434,17 @@ router.delete('/favorites/:productId', requireAuth, favorites.remove);
  *               city: { type: string }
  *               region: { type: string }
  *               shippingCost: { type: number, default: 0 }
+ *               guestName: { type: string, description: Required for guest checkout }
+ *               guestEmail: { type: string, description: Required for guest checkout }
+ *               guestPhone: { type: string, description: Required for guest checkout }
+ *               items:
+ *                 type: array
+ *                 description: Required for guest checkout (ignored for signed-in requests, which use the server cart)
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     productId: { type: string, format: uuid }
+ *                     quantity: { type: integer }
  *     responses:
  *       201:
  *         description: Order created; redirect the customer to paymentUrl
@@ -442,7 +456,6 @@ router.delete('/favorites/:productId', requireAuth, favorites.remove);
  *                 order: { $ref: '#/components/schemas/Order' }
  *                 paymentUrl: { type: string }
  *       400: { $ref: '#/components/responses/BadRequest' }
- *       401: { $ref: '#/components/responses/Unauthorized' }
  *       409:
  *         description: Insufficient stock for an item in the cart
  *         content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -458,8 +471,34 @@ router.delete('/favorites/:productId', requireAuth, favorites.remove);
  *             schema: { type: array, items: { $ref: '#/components/schemas/Order' } }
  *       401: { $ref: '#/components/responses/Unauthorized' }
  */
-router.post('/orders', requireAuth, orders.createOrder);
+router.post('/orders', optionalAuth, orders.createOrder);
 router.get('/orders', requireAuth, orders.listMyOrders);
+
+/**
+ * @openapi
+ * /orders/lookup:
+ *   get:
+ *     tags: [Orders]
+ *     summary: Public self-serve order tracking — for guests (no account) and signed-in customers alike
+ *     description: The order number plus a matching phone/email acts as the credential, since this route has no auth.
+ *     parameters:
+ *       - in: query
+ *         name: orderNumber
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: contact
+ *         required: true
+ *         schema: { type: string }
+ *         description: The email or phone number used at checkout
+ *     responses:
+ *       200:
+ *         description: Order
+ *         content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+ *       400: { $ref: '#/components/responses/BadRequest' }
+ *       404: { $ref: '#/components/responses/NotFound' }
+ */
+router.get('/orders/lookup', orders.lookupOrder);
 
 /**
  * @openapi
@@ -516,7 +555,7 @@ router.get('/orders/:id/verify', requireAuth, orders.verifyPayment);
  *   get:
  *     tags: [Orders]
  *     summary: Verify a payment by Paystack reference (called from the payment-complete page)
- *     security: [{ bearerAuth: [] }]
+ *     description: Public — the reference itself is the credential, so this works for guest checkouts too.
  *     parameters:
  *       - in: query
  *         name: reference
@@ -535,10 +574,9 @@ router.get('/orders/:id/verify', requireAuth, orders.verifyPayment);
  *                 paymentStatus: { type: string }
  *                 totalAmount: { type: number }
  *       400: { $ref: '#/components/responses/BadRequest' }
- *       401: { $ref: '#/components/responses/Unauthorized' }
  *       404: { $ref: '#/components/responses/NotFound' }
  */
-router.get('/payments/verify', requireAuth, orders.verifyByReference);
+router.get('/payments/verify', orders.verifyByReference);
 
 /**
  * @openapi
