@@ -1,6 +1,8 @@
 const { sequelize, Order, OrderItem, Payment, Product, Brand, Inventory, CartItem, User, OrderStatusHistory, InventoryLog } = require('../models');
 const paystack = require('../services/paystack');
 const { sendSms } = require('../services/naloSms');
+const { sendEmail } = require('../services/email');
+const { orderRecipient, getOrderItems } = require('../services/orderNotify');
 
 function generateOrderNumber() {
   const stamp = Date.now().toString(36).toUpperCase();
@@ -169,14 +171,22 @@ async function markOrderPaidAndNotify(order, verified) {
     },
   });
   const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'pending_delivery' });
-  const phone = order.User?.phoneNumber || order.guestPhone;
-  const name = order.User?.firstName || order.guestName;
+  const { phone, name, email } = orderRecipient(order);
   const smsResult = phone && await sendSms(phone, 'order_confirmed', {
     name,
     orderNumber: order.orderNumber,
     amount: Number(order.totalAmount).toFixed(2),
   });
-  if (smsResult) {
+  const emailResult = email && await sendEmail(email, 'order_confirmed', {
+    name,
+    orderNumber: order.orderNumber,
+    amount: Number(order.totalAmount).toFixed(2),
+    subtotal: Number(order.subtotal).toFixed(2),
+    shippingCost: Number(order.shippingCost).toFixed(2),
+    address: order.shippingAddress,
+    items: getOrderItems(order),
+  });
+  if (smsResult || emailResult) {
     history.smsSentAt = new Date();
     await history.save();
   }
@@ -197,7 +207,10 @@ async function paystackWebhook(req, res) {
   try {
     if (event.event === 'charge.success') {
       const reference = event.data.reference;
-      const order = await Order.findOne({ where: { paystackReference: reference }, include: [User] });
+      const order = await Order.findOne({
+        where: { paystackReference: reference },
+        include: [User, { model: OrderItem, include: [Product] }],
+      });
       if (!order || order.paymentStatus === 'completed') return;
 
       // Double-check with Paystack before marking paid
@@ -224,7 +237,7 @@ async function verifyByReference(req, res, next) {
     if (!reference) return res.status(400).json({ error: 'reference is required' });
     const order = await Order.findOne({
       where: { paystackReference: reference },
-      include: [User],
+      include: [User, { model: OrderItem, include: [Product] }],
     });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
@@ -234,8 +247,8 @@ async function verifyByReference(req, res, next) {
         if (verified.status === 'success') {
           await markOrderPaidAndNotify(order, verified);
         }
-      } catch {
-        // verification unavailable — report current stored status
+      } catch (err) {
+        console.error('verifyByReference error:', err);
       }
     }
     res.json({

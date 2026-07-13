@@ -3,7 +3,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { sequelize, DeliveryPerson, DeliveryFee, Order, OrderItem, Product, User, OrderStatusHistory } = require('../models');
 const { sendSms } = require('../services/naloSms');
+const { sendEmail } = require('../services/email');
 const { buildRiderOwnReport } = require('../services/pdfReports');
+const { orderRecipient, dispatchDetails } = require('../services/orderNotify');
 
 /** Query params are plain <input type="date"> values (YYYY-MM-DD) — expand to whole-day bounds. */
 function parseDateRange(query) {
@@ -174,7 +176,11 @@ async function dispatchRider(req, res, next) {
     const { orderIds } = req.body || {};
     if (Array.isArray(orderIds) && orderIds.length) where.id = { [Op.in]: orderIds };
 
-    const orders = await Order.findAll({ where, include: [User], order: [['createdAt', 'ASC']] });
+    const orders = await Order.findAll({
+      where,
+      include: [User, { model: OrderItem, include: [Product] }],
+      order: [['createdAt', 'ASC']],
+    });
     if (!orders.length) {
       return res.status(400).json({ error: `${person.name} has no assigned orders awaiting dispatch` });
     }
@@ -183,15 +189,28 @@ async function dispatchRider(req, res, next) {
       order.status = 'dispatched';
       await order.save();
       const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'dispatched' });
-      if (order.User?.phoneNumber) {
-        const sent = await sendSms(order.User.phoneNumber, 'order_shipped', {
-          name: order.User.firstName,
-          orderNumber: order.orderNumber,
-        });
-        if (sent) {
-          history.smsSentAt = new Date();
-          await history.save();
-        }
+      const { phone, name, email } = orderRecipient(order);
+      const d = dispatchDetails(order, person);
+      const smsResult = phone && await sendSms(phone, 'order_shipped', {
+        name,
+        orderNumber: order.orderNumber,
+        items: d.itemsText,
+        riderName: d.riderName,
+        riderPhone: d.riderPhone,
+        eta: d.eta,
+      });
+      const emailResult = email && await sendEmail(email, 'order_shipped', {
+        name,
+        orderNumber: order.orderNumber,
+        items: d.items,
+        riderName: d.riderName,
+        riderPhone: d.riderPhone,
+        eta: d.eta,
+        address: order.shippingAddress,
+      });
+      if (smsResult || emailResult) {
+        history.smsSentAt = new Date();
+        await history.save();
       }
     }
 
@@ -320,15 +339,12 @@ async function riderConfirmDelivery(req, res, next) {
     await order.save();
 
     const history = await OrderStatusHistory.create({ OrderId: order.id, status: 'delivered' });
-    if (order.User?.phoneNumber) {
-      const sent = await sendSms(order.User.phoneNumber, 'order_delivered', {
-        name: order.User.firstName,
-        orderNumber: order.orderNumber,
-      });
-      if (sent) {
-        history.smsSentAt = new Date();
-        await history.save();
-      }
+    const { phone, name, email } = orderRecipient(order);
+    const smsResult = phone && await sendSms(phone, 'order_delivered', { name, orderNumber: order.orderNumber });
+    const emailResult = email && await sendEmail(email, 'order_delivered', { name, orderNumber: order.orderNumber });
+    if (smsResult || emailResult) {
+      history.smsSentAt = new Date();
+      await history.save();
     }
     res.json({ orderId: order.id, orderNumber: order.orderNumber, status: order.status });
   } catch (err) {

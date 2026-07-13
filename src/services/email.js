@@ -1,0 +1,210 @@
+const nodemailer = require('nodemailer');
+const { NotificationLog } = require('../models');
+
+const BRAND = {
+  name: 'VX Perfumery',
+  tagline: 'Fine Fragrances, Delivered',
+  dark: '#1a1a1a',
+  gold: '#c9a227',
+  cream: '#faf7f2',
+  muted: '#6b6b6b',
+};
+
+// Lazily created so a missing EMAIL_USER/EMAIL_APP_PASSWORD doesn't crash the
+// server at boot — it just disables email sending until configured.
+let transporter;
+function getTransporter() {
+  if (transporter !== undefined) return transporter;
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) {
+    transporter = null;
+    return transporter;
+  }
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_APP_PASSWORD },
+  });
+  return transporter;
+}
+
+function currency(n) {
+  return `GHS ${Number(n || 0).toFixed(2)}`;
+}
+
+function itemsTable(items = []) {
+  if (!items.length) return '';
+  const rows = items
+    .map(
+      (i) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #eee;color:${BRAND.dark};font-size:14px;">${i.name}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #eee;color:${BRAND.muted};font-size:14px;text-align:center;">${i.quantity}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #eee;color:${BRAND.dark};font-size:14px;text-align:right;">${currency(i.subtotal)}</td>
+    </tr>`
+    )
+    .join('');
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th align="left" style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};padding-bottom:8px;border-bottom:2px solid ${BRAND.dark};">Item</th>
+          <th align="center" style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};padding-bottom:8px;border-bottom:2px solid ${BRAND.dark};">Qty</th>
+          <th align="right" style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};padding-bottom:8px;border-bottom:2px solid ${BRAND.dark};">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+/** Email-safe (table-based, inline-styled) layout — works across Gmail/Outlook/Apple Mail. */
+function layout({ preheader = '', title, bodyHtml }) {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+  </head>
+  <body style="margin:0;padding:0;background:${BRAND.cream};font-family:Georgia,'Times New Roman',serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.cream};padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+            <tr>
+              <td style="background:${BRAND.dark};padding:28px 32px;text-align:center;">
+                <div style="color:${BRAND.gold};font-size:22px;letter-spacing:0.18em;font-weight:bold;">VX PERFUMERY</div>
+                <div style="color:#cfcfcf;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin-top:4px;">${BRAND.tagline}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;">
+                ${bodyHtml}
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#f4f1ec;padding:20px 32px;text-align:center;">
+                <div style="font-size:12px;color:${BRAND.muted};">VX Perfumery &middot; Accra, Ghana</div>
+                <div style="font-size:12px;color:${BRAND.muted};margin-top:4px;">Questions about your order? Just reply to this email.</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+const templates = {
+  order_confirmed: (p) => ({
+    subject: `Order Confirmed — ${p.orderNumber}`,
+    html: layout({
+      title: 'Order Confirmed',
+      preheader: `Your order ${p.orderNumber} is confirmed`,
+      bodyHtml: `
+        <h1 style="font-size:20px;color:${BRAND.dark};margin:0 0 12px;">Thank you, ${p.name}!</h1>
+        <p style="font-size:14px;color:${BRAND.muted};line-height:1.6;margin:0 0 8px;">
+          Your order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong> has been confirmed and is being prepared.
+          We'll notify you as soon as it's on its way.
+        </p>
+        ${itemsTable(p.items)}
+        <table role="presentation" width="100%" style="margin-top:4px;">
+          <tr><td style="font-size:14px;color:${BRAND.muted};padding:4px 0;">Subtotal</td><td align="right" style="font-size:14px;color:${BRAND.dark};">${currency(p.subtotal)}</td></tr>
+          <tr><td style="font-size:14px;color:${BRAND.muted};padding:4px 0;">Delivery</td><td align="right" style="font-size:14px;color:${BRAND.dark};">${currency(p.shippingCost)}</td></tr>
+          <tr><td style="font-size:15px;font-weight:bold;color:${BRAND.dark};padding:10px 0 0;border-top:2px solid ${BRAND.dark};">Total</td><td align="right" style="font-size:15px;font-weight:bold;color:${BRAND.dark};padding:10px 0 0;border-top:2px solid ${BRAND.dark};">${currency(p.amount)}</td></tr>
+        </table>
+        <p style="font-size:13px;color:${BRAND.muted};margin-top:24px;">Delivering to: ${p.address}</p>
+      `,
+    }),
+  }),
+  order_shipped: (p) => ({
+    subject: `Your order ${p.orderNumber} has been dispatched`,
+    html: layout({
+      title: 'Order Dispatched',
+      preheader: `Order ${p.orderNumber} is on its way — estimated delivery ${p.eta}`,
+      bodyHtml: `
+        <h1 style="font-size:20px;color:${BRAND.dark};margin:0 0 12px;">On its way, ${p.name}!</h1>
+        <p style="font-size:14px;color:${BRAND.muted};line-height:1.6;margin:0 0 20px;">
+          Order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong> has been dispatched with our rider.
+        </p>
+        <table role="presentation" width="100%" style="background:${BRAND.cream};border-radius:6px;margin-bottom:8px;">
+          <tr>
+            <td style="padding:16px;">
+              <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};margin-bottom:6px;">Your Rider</div>
+              <div style="font-size:15px;color:${BRAND.dark};font-weight:bold;">${p.riderName}</div>
+              <div style="font-size:14px;color:${BRAND.muted};">${p.riderPhone}</div>
+              <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.muted};margin-top:14px;">Estimated Delivery</div>
+              <div style="font-size:14px;color:${BRAND.dark};">${p.eta}</div>
+            </td>
+          </tr>
+        </table>
+        ${itemsTable(p.items)}
+        <p style="font-size:13px;color:${BRAND.muted};margin-top:16px;">Delivering to: ${p.address}. The rider will call you to arrange delivery.</p>
+      `,
+    }),
+  }),
+  order_delivered: (p) => ({
+    subject: `Delivered — Order ${p.orderNumber}`,
+    html: layout({
+      title: 'Order Delivered',
+      preheader: `Order ${p.orderNumber} has been delivered`,
+      bodyHtml: `
+        <h1 style="font-size:20px;color:${BRAND.dark};margin:0 0 12px;">Enjoy your fragrance, ${p.name}!</h1>
+        <p style="font-size:14px;color:${BRAND.muted};line-height:1.6;">
+          Your order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong> has been delivered.
+          Thank you for shopping with VX Perfumery — we hope to serve you again soon.
+        </p>
+      `,
+    }),
+  }),
+  payment_failed: (p) => ({
+    subject: `Payment issue — Order ${p.orderNumber}`,
+    html: layout({
+      title: 'Payment Failed',
+      preheader: `We couldn't process payment for order ${p.orderNumber}`,
+      bodyHtml: `
+        <h1 style="font-size:20px;color:${BRAND.dark};margin:0 0 12px;">Hi ${p.name},</h1>
+        <p style="font-size:14px;color:${BRAND.muted};line-height:1.6;">
+          We couldn't process payment for order <strong style="color:${BRAND.dark};">${p.orderNumber}</strong>.
+          Please try again from your account page.
+        </p>
+      `,
+    }),
+  }),
+};
+
+/**
+ * Send a branded email via Gmail SMTP and record the attempt in NotificationLog.
+ * Never throws — a failed email must not break order processing.
+ */
+async function sendEmail(to, messageType, params = {}) {
+  const build = templates[messageType];
+  if (!build || !to) return null;
+
+  const { subject, html } = build(params);
+  const log = { recipient: to, messageType, provider: 'gmail_smtp' };
+
+  const t = getTransporter();
+  if (!t) {
+    console.error(`Email not sent (${messageType} → ${to}): set EMAIL_USER and EMAIL_APP_PASSWORD in .env`);
+    await NotificationLog.create({ ...log, status: 'failed', errorMessage: 'Email not configured' }).catch(() => {});
+    return null;
+  }
+
+  try {
+    const info = await t.sendMail({
+      from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    await NotificationLog.create({ ...log, status: 'sent', externalReferenceId: info.messageId });
+    return info;
+  } catch (err) {
+    console.error(`Email failed (${messageType} → ${to}):`, err.message);
+    await NotificationLog.create({ ...log, status: 'failed', errorMessage: err.message }).catch(() => {});
+    return null;
+  }
+}
+
+module.exports = { sendEmail, templates };

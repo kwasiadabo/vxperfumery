@@ -5,7 +5,7 @@ const templates = {
   order_confirmed: (p) =>
     `Hi ${p.name}, your VX Perfumery order ${p.orderNumber} (GHS ${p.amount}) is confirmed. We'll text you when it ships. Thank you!`,
   order_shipped: (p) =>
-    `Hi ${p.name}, your VX Perfumery order ${p.orderNumber} has been dispatched. Expect a call from our rider to arrange delivery.`,
+    `Hi ${p.name}, your VX Perfumery order ${p.orderNumber} (${p.items}) has been dispatched. Rider: ${p.riderName} (${p.riderPhone}). Estimated delivery: ${p.eta}. Rider will call you to arrange delivery.`,
   order_delivered: (p) =>
     `Hi ${p.name}, your VX Perfumery order ${p.orderNumber} has been delivered. Thank you for shopping with us — we hope you enjoy your fragrance and look forward to serving you again!`,
   payment_failed: (p) =>

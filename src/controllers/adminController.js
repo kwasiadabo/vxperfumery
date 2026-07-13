@@ -1,7 +1,9 @@
 const { Op, fn, col, literal } = require('sequelize');
 const { sequelize, Product, Brand, Category, Inventory, InventoryLog, Order, OrderItem, User, OrderStatusHistory, DeliveryPerson, Issue } = require('../models');
 const { sendSms } = require('../services/naloSms');
+const { sendEmail } = require('../services/email');
 const { buildSalesReport } = require('../services/pdfReports');
+const { orderRecipient, dispatchDetails } = require('../services/orderNotify');
 
 // ---------- Products ----------
 
@@ -146,7 +148,9 @@ async function updateOrderStatus(req, res, next) {
     const allowed = ['pending', 'pending_delivery', 'dispatched', 'delivered', 'cancelled'];
     if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
 
-    const order = await Order.findByPk(req.params.id, { include: [User] });
+    const order = await Order.findByPk(req.params.id, {
+      include: [User, DeliveryPerson, { model: OrderItem, include: [Product] }],
+    });
     if (!order) return res.status(404).json({ error: 'Order not found' });
     if (status === 'dispatched' && !order.DeliveryPersonId) {
       return res.status(400).json({ error: 'Assign a rider before dispatching this order' });
@@ -157,12 +161,22 @@ async function updateOrderStatus(req, res, next) {
     await order.save();
 
     const history = await OrderStatusHistory.create({ OrderId: order.id, status });
-    if (SMS_BY_STATUS[status] && order.User?.phoneNumber) {
-      const sent = await sendSms(order.User.phoneNumber, SMS_BY_STATUS[status], {
-        name: order.User.firstName,
+    const { phone, name, email } = orderRecipient(order);
+    if (SMS_BY_STATUS[status] && (phone || email)) {
+      const d = status === 'dispatched' ? dispatchDetails(order, order.DeliveryPerson) : null;
+      const smsExtra = d ? { items: d.itemsText, riderName: d.riderName, riderPhone: d.riderPhone, eta: d.eta } : {};
+      const emailExtra = d ? { items: d.items, riderName: d.riderName, riderPhone: d.riderPhone, eta: d.eta, address: order.shippingAddress } : {};
+      const smsResult = phone && await sendSms(phone, SMS_BY_STATUS[status], {
+        name,
         orderNumber: order.orderNumber,
+        ...smsExtra,
       });
-      if (sent) {
+      const emailResult = email && await sendEmail(email, SMS_BY_STATUS[status], {
+        name,
+        orderNumber: order.orderNumber,
+        ...emailExtra,
+      });
+      if (smsResult || emailResult) {
         history.smsSentAt = new Date();
         await history.save();
       }
